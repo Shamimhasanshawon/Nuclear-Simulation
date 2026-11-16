@@ -1,0 +1,229 @@
+%matplotlib inline
+import openmc
+import csv
+import pandas as pd
+import os
+
+df = pd.read_csv('paper.csv')
+# print(df)
+
+Gd2O3 = openmc.Material(name="Gd2O3")
+Gd2O3.add_element('Gd',2.0)
+Gd2O3.add_element('O',3.0)
+
+
+FeCrAl= openmc.Material(name="FeCrAl")
+FeCrAl.add_element('Fe', 1.0)
+FeCrAl.add_element('Cr', 1.0)
+FeCrAl.add_element('Al', 1.0)
+FeCrAl.set_density('g/cm3',7.10)
+
+
+helium = openmc.Material(name="helium")
+helium.add_element('He', 1.0)
+helium.set_density('g/cm3', 0.001598)
+
+
+water_column = openmc.Material(name="water column")
+water_column.add_element('H', 2.0)
+water_column.add_element('O', 1.0)
+water_column.add_nuclide('B10', E)  #BORON CONCENTRATION
+water_column.set_density('g/cm3', 0.737571) # water density was adjusted at P=7.1 MPA and T = 560 kelvin
+water_column.add_s_alpha_beta('c_H_in_H2O')
+
+result = []
+
+for i in range(len(df)):
+    A = df['A'][i]
+    B = 1 - A
+    C = df['C'][i]
+    D = 1 - C
+    E = df['E'][i]
+    P = df['P'][i]
+    
+    UO2 = openmc.Material(name="UO2")
+    UO2.add_nuclide('U235', A)    # U235 ENRICHMENT
+    UO2.add_nuclide('U238', B)    # U238 ENRICHMENT
+    UO2.add_nuclide('O16', 2.0)
+    UO2.add_element('Cr',0.001)
+    UO2.add_element('Al',0.001)
+    UO2.set_density('g/cm3', 10.67)
+
+
+    UO2Gd2O3 = openmc.Material.mix_materials([UO2, Gd2O3], [C, D], 'wo')    #UO2, Gd2O3 CONCENTRATION
+
+
+    water = openmc.Material(name="water")
+    water.add_element('H', 2.0)
+    water.add_element('O', 1.0)
+    water.set_density('g/cm3', 1)
+    water.add_s_alpha_beta('c_H_in_H2O')
+
+    materials_file = openmc.Materials([UO2, UO2Gd2O3, FeCrAl, helium, water_column, water])
+    materials_file.export_to_xml()    
+
+
+    #Pin Cell Geometry 
+    fuel_outer_radius = openmc.ZCylinder(r=0.8255/2)
+    clad_inner_radius = openmc.ZCylinder(r=0.8379/2)
+    clad_outer_radius = openmc.ZCylinder(r=0.9522/2)
+    fuel_region = -fuel_outer_radius
+    gap_region = +fuel_outer_radius & -clad_inner_radius
+    clad_region = +clad_inner_radius & -clad_outer_radius
+
+    fuel1 = openmc.Cell(name='fuel1')
+    fuel1.fill = UO2
+    fuel1.region = fuel_region
+    fuel1.temperature = 560.0
+    
+
+    fuel2 = openmc.Cell(name='fuel2')
+    fuel2.fill = UO2Gd2O3
+    fuel2.region = fuel_region
+    fuel2.temperature = 560.0
+    
+    gap1 = openmc.Cell(name='gap1')
+    gap1.fill = helium
+    gap1.region = gap_region
+
+    gap2 = openmc.Cell(name='gap2')
+    gap2.fill = helium
+    gap2.region = gap_region
+    fuel2.temperature = 560.0
+
+    clad1 = openmc.Cell(name='clad1')
+    clad1.fill = FeCrAl
+    clad1.region = clad_region
+    clad1.temperature = 560.0
+    
+    clad2 = openmc.Cell(name='clad2')
+    clad2.fill = FeCrAl
+    clad2.region = clad_region
+    clad2.temperature = 560.0
+
+    water_region = +clad_outer_radius
+
+    moderator1 = openmc.Cell(name='moderator1')
+    moderator1.fill = water
+    moderator1.region = water_region
+    moderator1.temperature = 560.0
+
+    moderator2 = openmc.Cell(name='moderator2')
+    moderator2.fill = water
+    moderator2.region = water_region
+    moderator2.temperature = 560.0
+
+    # Geometry definitions for the guide tube
+    water_or = openmc.ZCylinder(r=1.1220/2)
+    wclad_or = openmc.ZCylinder(r=1.2040/2)
+    wwater_inner_region = -water_or
+    wclad_region = -wclad_or & +water_or 
+    wwater_outer_region = +wclad_or
+
+    wwater_inner_cell = openmc.Cell(name='wwater_inner')
+    wwater_inner_cell.region = wwater_inner_region
+    wwater_inner_cell.fill = water_column
+    wwater_inner_cell.temperature = 560.0
+
+    wclad_cell = openmc.Cell(name='wclad')
+    wclad_cell.fill = water_column
+    wclad_cell.region = wclad_region
+    wclad_cell.temperature = 560.0 
+
+    wwater_outer_cell = openmc.Cell(name='wwater_outer')
+    wwater_outer_cell.fill = water_column
+    wwater_outer_cell.region = wwater_outer_region
+    wwater_outer_cell.temperature = 560.0
+
+    wp= openmc.Universe(cells=[wwater_inner_cell, wclad_cell, wwater_outer_cell])
+    wp.plot(width=(2.5, 2.5), colors={wwater_inner_cell: 'blue', wclad_cell: 'blue', wwater_outer_cell: 'blue'})
+
+    f1 = openmc.Universe(cells=(fuel1, gap1, clad1, moderator1))
+    f2 = openmc.Universe(cells=(fuel2, gap2, clad2, moderator2))
+    f1.plot(width=(1.6, 1.6), colors={fuel1: 'yellow', gap1: 'green', clad1: 'red', moderator1: 'blue'})
+    f2.plot(width=(1.6, 1.6), colors={fuel2: 'orange', gap2: 'green', clad2: 'red', moderator2: 'blue'})
+
+    assembly = openmc.RectLattice(name='assembly')
+    assembly.pitch = (P, P)  # FUEL PITCH
+    assembly.lower_left = [- P * 8 / 2.0] * 2
+
+  
+    assembly.universes = [ 
+                         [f1, f1, f1, f1, f1, f1, f1, f1],
+                         [f1, f1, f2, f1, f1, f2, f1, f1],
+                         [f1, f2, f1, f1, f1, f1, f2, f1],
+                         [f1, f1, f1, wp, wp, f1, f1, f1],
+                         [f1, f1, f1, wp, wp, f1, f1, f1],
+                         [f1, f2, f1, f1, f1, f1, f2, f1],
+                         [f1, f1, f2, f1, f1, f2, f1, f1],
+                         [f1, f1, f1, f1, f1, f1, f1, f1] ]
+
+    min_x = openmc.XPlane(x0=-(P * 8 / 2.0), boundary_type='reflective')
+    max_x = openmc.XPlane(x0=+(P * 8 / 2.0), boundary_type='reflective')
+    min_y = openmc.YPlane(y0=-(P * 8 / 2.0), boundary_type='reflective')
+    max_y = openmc.YPlane(y0=+(P * 8 / 2.0), boundary_type='reflective')
+    min_z = openmc.ZPlane(z0= -(358.8/2), boundary_type='reflective')
+    max_z = openmc.ZPlane(z0= +(358.8/2), boundary_type='reflective')
+
+    root_cell = openmc.Cell(name='root cell', fill=assembly)
+    root_cell.region = +min_x & -max_x & +min_y & -max_y & +min_z & -max_z
+    root_universe = openmc.Universe(name='root universe')
+    root_universe.add_cell(root_cell)
+    geometry = openmc.Geometry(root_universe)
+    geometry.export_to_xml()
+
+    point = openmc.stats.Point((0, 0, 0))
+    source = openmc.Source(space=point)
+    settings = openmc.Settings()
+    settings.source = source
+    settings.batches = 200
+    settings.inactive = 20
+    settings.particles = 10000
+    settings.temperature = {'multipole': True, 'method': 'interpolation', 'range': [290, 2500]}
+    settings.export_to_xml()
+
+    print("Test Case: ")
+    print(i+1)
+    openmc.run()
+    
+    
+    sp = openmc.StatePoint('statepoint.200.h5')
+    k = sp.keff
+    result.append(k)
+    os.remove('summary.h5')
+    os.remove('statepoint.200.h5')
+    os.remove('geometry.xml')
+    os.remove('materials.xml')
+    os.remove('settings.xml')
+
+##################
+result
+################
+rslt = str(result)
+l = len(rslt)
+#################
+keff = [0.0]*len(df)
+sd = [0.0]*len(df)
+i = 1
+n = 0
+while i < l:
+    for j in range(i,l):
+        if rslt[j] == '+':
+            keff[n] = rslt[i:j]
+            break
+    for m in range(j,l):
+        if rslt[m] == ',' or rslt[m] == ']':
+            sd[n] = rslt[j+3:m]
+            break
+    i = m+2
+    n += 1
+##################
+keff
+#################
+sd
+#############
+k = pd.DataFrame(keff)
+k.to_csv('keff8x8.csv')
+############
+s = pd.DataFrame(sd)
+s.to_csv('sd8x8.csv')
